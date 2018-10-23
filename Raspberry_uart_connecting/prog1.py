@@ -4,21 +4,35 @@ import time
 import pathlib
 import serial
 
+#各種変数設定
+#空の送信データを作成
 submit_datas = ''
 
-path = '/home/pi/Desktop/data.txt'
-#uart-set-start
+#シリアル接続するデバイスを設定
+DEVICE = '/dev/ttyUSB0'
 
-ser = serial.Serial('/dev/ttyUSB0', 115200)
+#ファイルのあるパスを設定
+path = '/home/pi/Desktop/data.txt'
+
+#データ間の区切りを設定
+DIVICE = ', '
+
+#指定デバイスをレート115200でオープン
+ser = serial.Serial(DEVICE, 115200)
+
+#指定デバイスの開放情報を確認
 print(ser)
 
-#ser.write(b'Initialize...')
+#バスナンバーを指定する(Raspberry Pi 3Bなら1、それ以前は0)
+bus_number  = 1
 
-bus_number  = 1#rasp-ver:B3
-i2c_address = 0x76#connect_to_GND
+#センサの敗戦によって変更、テキストの内容だとGNdへのプルダウンのため0x76
+i2c_address = 0x76
 
+#バスナンバーで開く
 bus = SMBus(bus_number)
 
+#気象データの定義
 digT = []
 digP = []
 digH = []
@@ -26,10 +40,10 @@ digH = []
 t_fine = 0.0
 
 
-def writeReg(reg_address, data):#send_register
+def writeReg(reg_address, data):#センサのアドレス、レジストリ関係(編集不可)
 	bus.write_byte_data(i2c_address,reg_address,data)
 
-def get_calib_param():
+def get_calib_param():#取得データの補正(編集不可)
 	calib = []
 	
 	for i in range (0x88,0x88+24):
@@ -69,7 +83,7 @@ def get_calib_param():
 		if digH[i] & 0x8000:
 			digH[i] = (-digH[i] ^ 0xFFFF) + 1  
 
-def readData():#read_datas_&_print
+def readData():#各種データの読み込み&保存(基本編集不要)
 	data = []
 	for i in range (0xF7, 0xF7+8):
 		data.append(bus.read_byte_data(i2c_address,i))
@@ -77,11 +91,11 @@ def readData():#read_datas_&_print
 	temp_raw = (data[3] << 12) | (data[4] << 4) | (data[5] >> 4)
 	hum_raw  = (data[6] << 8)  |  data[7]
 	
-	compensate_T(temp_raw)
-	compensate_P(pres_raw)
-	compensate_H(hum_raw)
+	compensate_T(temp_raw)  #気温データの読み込み&送信データへ(submit_datas)の追加
+	compensate_P(pres_raw)  #気圧データの読み込み&送信データへ(submit_datas)の追加
+	compensate_H(hum_raw)   #湿度データの読み込み&送信データへ(submit_datas)の追加
 
-def compensate_P(adc_P):#read_preassure
+def compensate_P(adc_P):#気圧(Pressure)の読み込みと送信内容(submit_datas)への追加(編集不可)
 	global  t_fine
 	global submit_datas
 	pressure = 0.0
@@ -105,13 +119,11 @@ def compensate_P(adc_P):#read_preassure
 	pressure = pressure + ((v1 + v2 + digP[6]) / 16.0)
                 
 	print('pressure : %7.2f hPa' % (pressure/100))
-	kiatsu = str(round(pressure/100, 2)) + ', '
+	kiatsu = str(round(pressure/100, 2)) + DIVICE
 
-	#ser.write(kiatsu.encode('utf-8'))
-	#submit_datas = submit_datas + 'Press : ' + kiatsu
 	submit_datas = submit_datas + kiatsu
 
-def compensate_T(adc_T):#read_temperture
+def compensate_T(adc_T):#気温(Tempreture)の読み込みと送信内容(submit_datas)への追加(編集不可)
 	global t_fine
 	global submit_datas
 	v1 = (adc_T / 16384.0 - digT[0] / 1024.0) * digT[1]
@@ -119,13 +131,11 @@ def compensate_T(adc_T):#read_temperture
 	t_fine = v1 + v2
 	temperature = t_fine / 5120.0
 	print("temp : %-6.2f C'" % (temperature))
-	kion = str(round(temperature, 2)) + ', '
+	kion = str(round(temperature, 2)) + DIVICE
 	
-	#ser.write(kion.encode('utf-8'))
-	#submit_datas = submit_datas + 'Temp : ' +kion
 	submit_datas = submit_datas + kion
         
-def compensate_H(adc_H):#read_Humidity
+def compensate_H(adc_H):#湿度(Humidity)の読み込みと送信内容(submit_datas)への追加(編集不可)
 	global t_fine
 	global submit_datas
 	var_h = t_fine - 76800.0
@@ -139,13 +149,12 @@ def compensate_H(adc_H):#read_Humidity
 	elif var_h < 0.0:
 		var_h = 0.0
 	print("hum : %6.2f " % (var_h))
-	sitsudo = str(round(var_h, 2)) + ' '
+	sitsudo = str(round(var_h, 2))
 	
-	#ser.write(sitsudo.encode('utf-8'))
-	#submit_datas = submit_datas + 'Humid : ' + sitsudo + '\r\n'
+	#送信内容(submit_datas)の最後に終端文字(\n)をつけ、データの終わりを示す
 	submit_datas = submit_datas + sitsudo + '\r\n'
 
-def setup():#setup_reg_confs
+def setup():#センサの気象データのレジストリ&気象データの読み込みのセットアップ(編集不可)
 	osrs_t = 1			#Temperature oversampling x 1
 	osrs_p = 1			#Pressure oversampling x 1
 	osrs_h = 1			#Humidity oversampling x 1
@@ -162,25 +171,45 @@ def setup():#setup_reg_confs
 	writeReg(0xF4,ctrl_meas_reg)
 	writeReg(0xF5,config_reg)
 
-
+#セットアップ
 setup()
+
+#パラメータの補正
 get_calib_param()
 
 
 if __name__ == '__main__':
  #       os.makedirs('temp', exist_ok = True)
         p_empty = pathlib.Path(path)
-        
+        #無限ループ
         while 1:
+                #try内の内容でif文をかける
         	try:
+                        #気象データを読み込み
         		readData()
-        		print('submit(10): ' + submit_datas)
-        		okuru = submit_datas.encode('utf-8')
-        		print(okuru)
-        		ser.write(okuru)
-        		print('success')
-        		sleep(1)#wait
+        		
+        		#送るデータの確認表示
+        		print('submit: ' + submit_datas)
+        		
+        		#送るデータをバイナリ形式に変換
+        		SUBMIT = submit_datas.encode('utf-8')
+        		
+        		#バイナリ形式なら先端にbがついているので確認する
+        		print('submit(binary): ' + SUBMIT)
+        		
+        		#変換した気象データを送信する
+        		ser.write(SUBMIT)
+        		
+        		#送信内容の初期化
         		submit_datas = ''
+        		
+        		#1秒間のインターバルを置く
+        		sleep(1)
+        		
+        		#※確認用)ループの成功を確認
+        		#print('success')
+        		
         	except KeyboardInterrupt:
-        		pass
+                        #エラー発生時以後の処理をパスしてやり直す
+                        pass
         ser.close()
